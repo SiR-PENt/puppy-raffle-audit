@@ -89,6 +89,7 @@ contract PuppyRaffle is ERC721, Ownable {
                 require(players[i] != players[j], "PuppyRaffle: Duplicate player");
             }
         }
+        // q if it's an empty array, we still emit an event?
         emit RaffleEnter(newPlayers);
     }
 
@@ -130,17 +131,32 @@ contract PuppyRaffle is ERC721, Ownable {
     function selectWinner() external {
         require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
         require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+
+        // @audit weak randomness
+        // fixes: Chainlink VRF, Commit Reveal Scheme
         uint256 winnerIndex =
             uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
         address winner = players[winnerIndex];
+
+        // @audit-info why not do address(this).balance?
         uint256 totalAmountCollected = players.length * entranceFee;
         uint256 prizePool = (totalAmountCollected * 80) / 100;
         uint256 fee = (totalAmountCollected * 20) / 100;
+
+        // @audit: unsafe casting
+        // casting a type 256 to 64 because the value becomes truncated and we're eventually going to lose a ton of fees
         totalFees = totalFees + uint64(fee);
 
+        //when we mint a new NFT, we use the totalSupply as new tokenId
+        // q where do we increment the tokenId/totalSupply 
         uint256 tokenId = totalSupply();
 
         // We use a different RNG calculate from the winnerIndex to determine rarity
+        // @audit randomness
+
+        //q: if our transaction picks up a winner here, and we don't like it, do we just revert??
+        //q: looks like a little bit of a gas war?... @followup
+        //@audit people can revert the tx till they win
         uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
         if (rarity <= COMMON_RARITY) {
             tokenIdToRarity[tokenId] = COMMON_RARITY;
@@ -153,6 +169,9 @@ contract PuppyRaffle is ERC721, Ownable {
         delete players;
         raffleStartTime = block.timestamp;
         previousWinner = winner;
+        // q is there a way we could reenter this somehow?
+        // @audit: reentrancy
+        // @audit: the winner wouldn't get the money if their fallback was messed up
         (bool success,) = winner.call{value: prizePool}("");
         require(success, "PuppyRaffle: Failed to send prize pool to winner");
         _safeMint(winner, tokenId);
@@ -160,9 +179,12 @@ contract PuppyRaffle is ERC721, Ownable {
 
     /// @notice this function will withdraw the fees to the feeAddress
     function withdrawFees() external {
+        // if the protocol has players, someone cant withdraw fees
+        // @audit it will be difficult to withdraw fees if there are players
         require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
         uint256 feesToWithdraw = totalFees;
         totalFees = 0;
+        // q what if the feeAddress has a fallback that reverts?
         (bool success,) = feeAddress.call{value: feesToWithdraw}("");
         require(success, "PuppyRaffle: Failed to withdraw fees");
     }
@@ -171,6 +193,7 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @param newFeeAddress the new address to send fees to
     function changeFeeAddress(address newFeeAddress) external onlyOwner {
         feeAddress = newFeeAddress;
+        // q are we missing events?
         emit FeeAddressChanged(newFeeAddress);
     }
 

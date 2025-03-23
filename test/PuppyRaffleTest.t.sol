@@ -273,7 +273,45 @@ contract PuppyRaffleTest is Test {
         console.log("Ending attacker contract balance: ", address(puppyRaffle).balance);
     }
 
+    function testTotalFeesArithmeticOverflow() public playersEntered {
+        vm.warp(block.timestamp + duration);
+        vm.roll(block.number + 1);
+        puppyRaffle.selectWinner();
+
+        uint256 startingTotalFees = puppyRaffle.totalFees();
+        console.log("starting total fees: ", startingTotalFees);
+        //we then have 89 players enter the raffle
+        uint256 playersNum = 89;
+        address[] memory players = new address[](playersNum);
+        for(uint256 i = 0; i < 89; i++) {
+            players[i] = address(i);
+        }
+        puppyRaffle.enterRaffle{value: entranceFee * playersNum}(players);
+
+        vm.warp(block.timestamp + duration);
+        vm.roll(block.number + 1);
+
+        puppyRaffle.selectWinner();
+        uint256 endingTotalFees = puppyRaffle.totalFees();
+        console.log("ending total fee: ", endingTotalFees);
+
+        assert(endingTotalFees < startingTotalFees);
+
+        vm.prank(puppyRaffle.feeAddress());
+        vm.expectRevert("PuppyRaffle: There are currently players active!");
+        puppyRaffle.withdrawFees();
+    }
+
+    function testCantSendMoneyToContract() public {
+        address senderAddy = makeAddr("sender");
+        vm.deal(senderAddy, 1 ether);
+        vm.expectRevert();
+        vm.prank(senderAddy);
+        (bool success,) = payable(address(puppyRaffle)).call{value: 1 ether}("");
+        require(success);
+    }
 }
+
 contract ReentrancyAttacker {
     PuppyRaffle puppyRaffle;
     uint256 entranceFee;
@@ -305,6 +343,4 @@ contract ReentrancyAttacker {
     receive() external payable {
         _stealMoney();
     }
-
-
 }
