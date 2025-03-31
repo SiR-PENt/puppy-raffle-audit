@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.7.6;
+// report-written use of floating pragma is bad
+// reportt-written why are you using 0.7
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -21,8 +23,12 @@ contract PuppyRaffle is ERC721, Ownable {
     uint256 public immutable entranceFee;
 
     address[] public players;
+
+    // how long does the raffle lasts
+    // report-written this should be immutable
     uint256 public raffleDuration;
     uint256 public raffleStartTime;
+
     address public previousWinner;
 
     // We do some storage packing to save gas
@@ -35,6 +41,7 @@ contract PuppyRaffle is ERC721, Ownable {
     mapping(uint256 => string) public rarityToName;
 
     // Stats for the common puppy (pug)
+    // audit-gas should be constant
     string private commonImageUri = "ipfs://QmSsYRx3LpDAb1GZQm7zZ1AuHZjfbPkD6J7s9r41xu1mf8";
     uint256 public constant COMMON_RARITY = 70;
     string private constant COMMON = "common";
@@ -59,6 +66,7 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @param _raffleDuration the duration in seconds of the raffle
     constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration) ERC721("Puppy Raffle", "PR") {
         entranceFee = _entranceFee;
+        // check for zero address
         feeAddress = _feeAddress;
         raffleDuration = _raffleDuration;
         raffleStartTime = block.timestamp;
@@ -96,11 +104,12 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @param playerIndex the index of the player to refund. You can find it externally by calling `getActivePlayerIndex`
     /// @dev This function will allow there to be blank spots in the array
     function refund(uint256 playerIndex) public {
+        //written-skipped MEV
         address playerAddress = players[playerIndex];
         require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
         require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
 
-        // @audit Reentrancy
+        // written-report Reentrancy
  
         payable(msg.sender).sendValue(entranceFee);
 
@@ -111,6 +120,10 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @notice a way to get the index in the array
     /// @param player the address of a player in the raffle
     /// @return the index of the player in the array, if they are not active, it returns 0
+
+    // IMPACT: LOW/MEDIUM
+    // lIKELIHOOD: LOW/HIGH
+    // SEVERITY: MED/LOW
     function getActivePlayerIndex(address player) external view returns (uint256) {
         for (uint256 i = 0; i < players.length; i++) {
             if (players[i] == player) {
@@ -140,6 +153,11 @@ contract PuppyRaffle is ERC721, Ownable {
 
         // @audit-info why not do address(this).balance?
         uint256 totalAmountCollected = players.length * entranceFee;
+        // @audit-info magic numbers
+        // uint256 PRICEPOOL_PERCENTAGE = 80;
+        // uint256 FEE_PERCENTAGE = 20;
+        // uint256 POOL_PRECISON = 100;
+
         uint256 prizePool = (totalAmountCollected * 80) / 100;
         uint256 fee = (totalAmountCollected * 20) / 100;
 
