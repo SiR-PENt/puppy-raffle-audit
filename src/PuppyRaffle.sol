@@ -188,7 +188,7 @@ contract PuppyRaffle is ERC721, Ownable {
         raffleStartTime = block.timestamp;
         previousWinner = winner;
         // q is there a way we could reenter this somehow?
-        // @audit: reentrancy
+        // written report: reentrancy
         // @audit: the winner wouldn't get the money if their fallback was messed up
         (bool success,) = winner.call{value: prizePool}("");
         require(success, "PuppyRaffle: Failed to send prize pool to winner");
@@ -197,6 +197,7 @@ contract PuppyRaffle is ERC721, Ownable {
 
     /// @notice this function will withdraw the fees to the feeAddress
     function withdrawFees() external {
+        // is it difficult to withdraw fees if there are players? (MEV) 
         // if the protocol has players, someone cant withdraw fees
         // @audit it will be difficult to withdraw fees if there are players
         require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");

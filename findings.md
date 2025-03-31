@@ -1,3 +1,5 @@
+## Highs
+
 ### [H-1]: Reentrancy attack in `PuppyRaffle:refund` allows entrant to drain raffle balance.
 
 **Description:** The `PuppyRaffle::refund` does not follow CEI (Checks, Effect, Interactions) and as a result enables participants to drain the contract balance.
@@ -116,7 +118,105 @@ And this contract as well
     }
 ```
 
-### [M-#]: Looping through the players array to check for duplicates in `PupyyRaffle::enterRaffle` is a potential denial of service attack, incrementing gas costs for future entrants
+### [H-2] Weak Randomness in `PuppyRaffle::selectWinner` allows user to influence or select winner and winning puppy. 
+
+**Description:** Hashing `msg.sender`, `block.timestamp`, and `block.difficulty` together can create a predictable number. A predictable number is not a good random number. Malicious users can manipulate these values or know them ahead of time to choose the winner of the raffle themselves.
+
+*Note:** This additionally means that users could front-run this function and call `refund` and call refund if they see they are not the winner.
+
+**Impact:** Any user can influence the winner of the raffle, winning the money and selecting the rarest puppy. Making the entire raffle worthless if it becomes a gas war as to wins the raffle.
+
+**Proof of Concept:**
+
+1. Validators can know ahead of the time the `block.timestamp` and `block.difficulty` and use that to predict when/how to participate. See the Solidity doc on [Prevrandao]. `block.difficulty` was previously replaced with Prevrandao. 
+2. Users can mine/manipulate their `msg.sender`value to result in their address being used to generate the winner. 
+3. Users can revert their `selectWinner` transaction if they don't like the winner or resulting puppy. 
+
+Using on-chain value as a randomness seed is a [well-known attack vector](https://medium.com/better-programming/how-to-generate-truly-random-numbers-in-solidity-and-blockchain-9ced6472dbdf#:~:text=A%20request%20for%20a%20random,generate%20the%20resulting%20random%20number.) in the blockchain space.
+
+**Recommended Mitigation:** Consider using a cryptographically provable random number generator like [Chainlink VRF](https://docs.chain.link/vrf).
+
+### [H-3]: Integer overflow of `PuppyRaffle::totalFees` loses fees
+
+**Description:** In Solidity, versions prior to `0.8.0` were subject to integer overflows. 
+
+```js
+uint64 myVar = type(uint64).max;
+// output: 18446744073709551615
+myVar = myVar + 1;
+// myVar will be 0
+```
+
+**Impact:** In `PuppyRaffle::selectWinner`, `totalFees` are accumulated for the `feeAddress` to collect later in `PuppyAddress:withdrawFees`. However, if the `totalFees` variable overflows, the `feeAddress` may not collect the correct amount of fees, leaving the fees forever stuck in the contract.
+
+**Proof of Concept:** 
+
+1. We conclude a raffle of 4 players 
+2. We then enter a new raffle again with 89 players
+3. `totalFees` will be:
+
+```js
+totalFees += uint64(fees);
+totalFees = 8000000000000000000 + 178000000000000
+// and this will overflow
+// totalFees = an overflown fee
+```
+4. Finally, you will not be able to withdraw, due to the line below in `PuppyRaffle::withdrawFees`:
+
+```js
+require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+```
+Although you could use `selfdestruct` to send eth to the contract to match the totalFees and withdraw the fees, this is clearly not the intended design of the protocol. As some point, there'll be too much `balance` in the contract that the above require statement will be impossible to hit.
+
+
+<details>
+<summary>Code</summary>
+
+```js
+    function testTotalFeesArithmeticOverflow() public playersEntered {
+        vm.warp(block.timestamp + duration);
+        vm.roll(block.number + 1);
+        puppyRaffle.selectWinner();
+
+        uint256 startingTotalFees = puppyRaffle.totalFees();
+        console.log("starting total fees: ", startingTotalFees);
+        //we then have 89 players enter the raffle
+        uint256 playersNum = 89;
+        address[] memory players = new address[](playersNum);
+        for(uint256 i = 0; i < 89; i++) {
+            players[i] = address(i);
+        }
+        puppyRaffle.enterRaffle{value: entranceFee * playersNum}(players);
+
+        vm.warp(block.timestamp + duration);
+        vm.roll(block.number + 1);
+
+        puppyRaffle.selectWinner();
+        uint256 endingTotalFees = puppyRaffle.totalFees();
+        console.log("ending total fee: ", endingTotalFees);
+
+        assert(endingTotalFees < startingTotalFees);
+
+        vm.prank(puppyRaffle.feeAddress());
+        vm.expectRevert("PuppyRaffle: There are currently players active!");
+        puppyRaffle.withdrawFees();
+    }
+```
+</details>
+
+**Recommended Mitigations:** There are few recommended mitigations.
+1. Use a newer version of solidity, and a `uint256` instead of `uint64` for `puppyRaffle::totalFees`.
+2. You could use the `safeMath` library of Openzeppelin for version 0.7.6 of solidity, however you'll still have a problem with `uint64` type if too many fees are collected. 
+3. Remove the balance check from `PuppyRaffle:withdrawFees`
+
+```diff
+- require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+```
+There are more attack vectors associated with that require check so we recommend removing it regardless.
+
+## Medium
+
+### [M-1]: Looping through the players array to check for duplicates in `PupyyRaffle::enterRaffle` is a potential denial of service attack, incrementing gas costs for future entrants
 
 **Description:** The `puppyRaffle:enterRaffle` function loops through the `players` array to check for duplicates. However, the longer the `PuppyRaffle:players` array is, the more checks a new player will have to make. This means the gas costs for players who enter right when the raffle starts will be automatically lower than those who enter later. Every additional address in the players array is an additional check the loop will have to make.
 
@@ -216,13 +316,37 @@ function selectWinner() external {
 
 Alternatively, you could use Openzeppelin `EnumerableSet` library
 
-# Low
+### [M-2] Unsafe Cast of `PuppyRaffle::fee` loses fee
+
+### [M-3] Smart Contracts wallets raffle without a `fallback` or a `receive` function will block the start of a new contest. 
+
+**Description:** The `PuppyRaffle::selectWinner` is responsible for resetting the lottery. However, if the winner is a smart contract wallet, the lottery won't be able to restart. 
+
+Users could easily call the `PuppyRaffle::selectWinner` function again, and non-wallets entrants could enter, but could cost a lot due to the duplicate check and a lottery reset could get very challenging.
+
+**Impact:** The `puppyRaffle::selectWinner` could revert many times making the lottery reset difficult. 
+
+Also, true winners would not get paid out and someone else could take their money.
+
+**Proof of concept:**
+
+1. 10 smart contract wallets without a fallback or receive function enter the raffle
+2. The lottery ends
+3. The `selectWinner` wouldn't work even though the lottery was over
+
+**Recommended Mitigation:** There are few options to mitigate this issue. 
+1. Don't allow smart contracts entrants (not recommended)
+2. Create a mapping of addresses -> payout amounts so winners can pull their funds out themselves with a new `claimPrize` function, putting the owness on the winner to claim their prize (recommended)
+
+> This approach is known as pull over push
+
+## Lows
 
 ### [L-1]: `PuppyRaffle::getPlayerIndex` returns 0 for non-existent players and for players at index 0, causing a player at index 0 to incorrectly think they have not entered the raffle.
 
 **Description:** If a player is in the `PuppyRaffle::players` array at index 0, this will return 0, but according to the natspec, it will also return 0 if the player is not in the array.
 
-````js
+```js
 function getActivePlayerIndex(address player) external view returns (uint256) {
     for (uint256 i = 0; i < players.length; i++) {
         if (players[i] == player) {
@@ -254,20 +378,6 @@ Instances:
 - `PuppyRaffle::raffleDuration`,`PuppyRaffle: raffleStartTime`, and  should be immutable.
 - `PuppyRaffle::commonImageUri`,`PuppyRaffle: rareImageUri`, and  should be constant.
 
-### [I-2]: Solidity pragma should be specific, not wide
-
-Consider using a specific version of Solidity in your contracts instead of a wide version. For example, instead of `pragma solidity ^0.8.0;`, use `pragma solidity 0.8.0;`
-
-<details><summary>1 Found Instances</summary>
-
-
-- Found in src/PuppyRaffle.sol [Line: 2](src/PuppyRaffle.sol#L2)
-
-	```solidity
-	pragma solidity ^0.7.6;
-	```
-
-</details>
 
 ### [G-2]: Storage variables in a loop should be cached
 
@@ -287,7 +397,22 @@ Every time you call `players.length` you read from storage, as opposed to memory
 
 ## Informational
 
-### [I-3]: Using outdated versions of solidity is not recommended. 
+### [I-1]: Solidity pragma should be specific, not wide
+
+Consider using a specific version of Solidity in your contracts instead of a wide version. For example, instead of `pragma solidity ^0.8.0;`, use `pragma solidity 0.8.0;`
+
+<details><summary>1 Found Instances</summary>
+
+
+- Found in src/PuppyRaffle.sol [Line: 2](src/PuppyRaffle.sol#L2)
+
+	```solidity
+	pragma solidity ^0.7.6;
+	```
+
+</details>
+
+### [I-2]: Using outdated versions of solidity is not recommended. 
 
 solc frequently releases new compiler versions. Using an old version prevents access to new Solidity security checks. We also recommend avoiding complex pragma statement.
 
@@ -298,7 +423,7 @@ Use a simple pragma version that allows any of these versions. Consider using th
 
 See [Slither Documentation](#https://github.com/crytic/slither/wiki/Detector-Documentation#incorrect-versions-of-solidity) for more information.
 
-### [I-4]: Missing checks for `address(0)` when assigning values to address state variables
+### [I-3]: Missing checks for `address(0)` when assigning values to address state variables
 
 Check for `address(0)` when assigning values to address state variables.
 
@@ -317,3 +442,27 @@ Check for `address(0)` when assigning values to address state variables.
 	```
 
 </details>
+
+### [I-4]: `PuppyRaffle::selectWinner` should follow CEI, which is not best practice. 
+
+It is best to keep code clean and follow CEI
+
+```diff
+-    (bool success,) = winner.call{value: prizePool}("");
+-    require(success, "PuppyRaffle: Failed to send prize pool to winner");
+    _safeMint(winner, tokenId);
++    (bool success,) = winner.call{value: prizePool}("");
++    require(success, "PuppyRaffle: Failed to send prize pool to winner");
+```
+
+### [I-5]: Use of magic numbers is discouraged. 
+
+It can be confusing to see number literals in a codebase and its much more readable if the numbers are given a name.
+
+Examples:
+
+```diff
++    // uint256 PRICEPOOL_PERCENTAGE = 80;
++    // uint256 FEE_PERCENTAGE = 20;
++    // uint256 POOL_PRECISON = 100;
+```
