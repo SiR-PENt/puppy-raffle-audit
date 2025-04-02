@@ -1,3 +1,28 @@
+# Protocol Audit Report 
+
+**Prepared by Olasunkanmi**
+
+## Table of Contents
+<!--  -->
+## Protocol Summary
+
+## Disclaimer
+The Olasunkanmi team makes all effort to find as many vulnerabilities in the code in the given time period, but holds no responsibilities for the findings provided in this document. A security audit by the team is not an endorsement of the underlying business or product. The audit was time-boxed and the review of the code was solely on the security aspects of the Solidity implementation of the contracts.
+
+## Risk Classification
+
+## Audit Details
+
+### Scope
+
+### Roles
+
+## Executive Summary
+
+### Issues Found
+
+## Findings
+
 ## Highs
 
 ### [H-1]: Reentrancy attack in `PuppyRaffle:refund` allows entrant to drain raffle balance.
@@ -466,3 +491,6 @@ Examples:
 +    // uint256 FEE_PERCENTAGE = 20;
 +    // uint256 POOL_PRECISON = 100;
 ```
+### [I-6] State changes is missing emitting events
+ 
+### [1-7] `PuppyRaffle::_isActivePlayer` is never used and should be removed.
